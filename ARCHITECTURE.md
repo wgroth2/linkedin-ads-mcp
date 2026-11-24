@@ -121,7 +121,7 @@ Every LinkedIn call goes through the private `LinkedInApiClient.request()`:
 | `/rest/adAnalytics` | All performance, demographic, reach, conversion and lead-gen metrics |
 | `/rest/posts/{urn}`, `/rest/images/{urn}` | Resolve a creative's text and image for reporting |
 | `/rest/images?action=initializeUpload` | Start an image upload |
-| `/rest/conversions`, `/rest/leadForms`, `/rest/dmpSegments` | Conversion rules, lead forms, saved audiences |
+| `/rest/conversions`, `/rest/leadForms`, `/rest/adSegments` | Conversion rules, lead forms, targetable audiences |
 
 The API version is pinned in `LINKEDIN_VERSION`. LinkedIn supports each
 monthly version for about a year, so the constant needs a periodic bump and a

@@ -186,15 +186,17 @@ export interface LeadGenFormQuestion {
 
 // Audience Types
 export interface SavedAudience {
-  id: string;
+  id: number | string;
   name: string;
   account: string;
-  type: 'MATCHED' | 'LOOKALIKE' | 'PREDICTIVE';
-  status: 'ACTIVE' | 'EXPIRED' | 'PROCESSING' | 'FAILED';
-  memberCount?: number;
-  matchRate?: number;
-  createdAt: number;
-  lastModified: number;
+  /** adSegment type, e.g. BULK (list upload), RETARGETING (website/engagement), LOOKALIKE. */
+  type: string;
+  /** adSegment status, e.g. BUILDING, READY, UPDATING, ARCHIVED, EXPIRED. */
+  status: string;
+  /** Approximate matched LinkedIn members; absent until the audience is built. */
+  approximateMemberCount?: number;
+  created?: { actor?: string; time?: number };
+  lastModified?: { actor?: string; time?: number };
 }
 
 // API Response Types
@@ -277,8 +279,8 @@ export interface GetAudienceReachInput {
 
 export interface ListSavedAudiencesInput {
   accountId: string;
-  status?: Array<'ACTIVE' | 'EXPIRED' | 'PROCESSING'>;
-  audienceType?: 'MATCHED' | 'LOOKALIKE' | 'PREDICTIVE';
+  status?: string[];
+  audienceType?: string;
 }
 
 export interface GetConversionPerformanceInput {

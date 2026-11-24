@@ -166,7 +166,7 @@ export const getAudienceReachTool: Tool = {
 
 export const listSavedAudiencesTool: Tool = {
   name: 'list_saved_audiences',
-  description: 'Lists saved/matched audiences available in the account for targeting. Shows audience names, sizes, and statuses to help plan campaign targeting.',
+  description: 'Lists the audiences available in the account for targeting: uploaded company/contact lists (BULK), website retargeting audiences (RETARGETING), lookalikes and others. Returns each audience\'s name, type, status, approximate member count, dates, and the urn:li:adSegment URN to use in campaign targetingCriteria.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -176,16 +176,12 @@ export const listSavedAudiencesTool: Tool = {
       },
       status: {
         type: 'array',
-        items: {
-          type: 'string',
-          enum: ['ACTIVE', 'EXPIRED', 'PROCESSING'],
-        },
-        description: 'Filter by status',
+        items: { type: 'string' },
+        description: 'Filter by status, e.g. ["READY"] or ["BUILDING","READY"]. Other values LinkedIn uses include UPDATING, ARCHIVED and EXPIRED.',
       },
       audienceType: {
         type: 'string',
-        enum: ['MATCHED', 'LOOKALIKE', 'PREDICTIVE'],
-        description: 'Filter by audience type',
+        description: 'Filter by audience type, e.g. BULK (list upload), RETARGETING (website or engagement), LOOKALIKE',
       },
     },
     required: ['accountId'],
@@ -351,6 +347,17 @@ export async function handleGetAudienceReach(
   };
 }
 
+/**
+ * Converts an epoch-millisecond timestamp to an ISO string, or returns null
+ * when it is missing or not a valid date (new Date(undefined).toISOString()
+ * throws "Invalid time value").
+ */
+function toIsoOrNull(ms: unknown): string | null {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return null;
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 export async function handleListSavedAudiences(
   client: LinkedInApiClient,
   args: unknown
@@ -369,13 +376,13 @@ export async function handleListSavedAudiences(
   return {
     audiences: audiences.map(audience => ({
       id: audience.id,
+      targetingUrn: `urn:li:adSegment:${audience.id}`,
       name: audience.name,
       type: audience.type,
       status: audience.status,
-      memberCount: audience.memberCount,
-      matchRate: audience.matchRate,
-      createdAt: new Date(audience.createdAt).toISOString(),
-      lastModified: new Date(audience.lastModified).toISOString(),
+      approximateMemberCount: audience.approximateMemberCount ?? null,
+      createdAt: toIsoOrNull(audience.created?.time),
+      lastModified: toIsoOrNull(audience.lastModified?.time),
     })),
     totalCount: audiences.length,
   };

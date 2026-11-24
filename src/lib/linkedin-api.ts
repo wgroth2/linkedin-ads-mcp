@@ -1235,25 +1235,43 @@ export class LinkedInApiClient {
   // ==================== Audiences ====================
 
   /**
-   * Lists saved/matched audiences for an account.
+   * Lists the audiences an account can target (list uploads, website
+   * retargeting, lookalikes, ...) from /rest/adSegments, following paging.
+   *
+   * adSegments is used rather than /rest/dmpSegments because it covers every
+   * targetable audience type, has the same shape for all of them, and its IDs
+   * are the urn:li:adSegment URNs that campaign targeting refers to.
+   * Filters are applied client-side and compared case-insensitively.
    */
   async listSavedAudiences(accountId: string, options: {
     status?: string[];
     type?: string;
   } = {}): Promise<SavedAudience[]> {
-    const params: Record<string, string> = {
-      q: 'account',
-      account: `urn:li:sponsoredAccount:${accountId}`,
-    };
+    const pageSize = 100;
+    let audiences: SavedAudience[] = [];
 
-    const response = await this.request<LinkedInApiResponse<SavedAudience>>('/rest/dmpSegments', { params });
-    let audiences = response.elements || [];
+    for (let start = 0; ; start += pageSize) {
+      const response = await this.request<LinkedInApiResponse<SavedAudience>>('/rest/adSegments', {
+        params: {
+          q: 'accounts',
+          accounts: [`urn:li:sponsoredAccount:${accountId}`],
+          start: String(start),
+          count: String(pageSize),
+        },
+      });
+      const page = response.elements || [];
+      audiences = audiences.concat(page);
+      const total = response.paging?.total;
+      if (page.length < pageSize || (typeof total === 'number' && audiences.length >= total)) break;
+    }
 
     if (options.status?.length) {
-      audiences = audiences.filter(a => options.status!.includes(a.status));
+      const wanted = options.status.map(s => s.toUpperCase());
+      audiences = audiences.filter(a => wanted.includes(String(a.status).toUpperCase()));
     }
     if (options.type) {
-      audiences = audiences.filter(a => a.type === options.type);
+      const wanted = options.type.toUpperCase();
+      audiences = audiences.filter(a => String(a.type).toUpperCase() === wanted);
     }
 
     return audiences;

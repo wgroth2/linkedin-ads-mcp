@@ -341,7 +341,7 @@ After updating the config, restart Claude Desktop for the changes to take effect
 |------|-------------|
 | `get_audience_demographics` | Performance by job function, industry, seniority, company size, country, region |
 | `get_audience_reach` | Unique member reach, frequency, and native audience penetration metrics |
-| `list_saved_audiences` | View matched and lookalike audiences |
+| `list_saved_audiences` | View targetable audiences (list uploads, website retargeting, lookalikes) and their targeting URNs |
 
 ### Conversions & Lead Generation
 
