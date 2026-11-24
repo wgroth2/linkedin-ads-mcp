@@ -205,7 +205,7 @@ This MCP server connects Claude Desktop (or any MCP-compatible client) to the Li
 
 ## Features
 
-- **25 Specialized Tools** - Covering accounts, campaigns, creatives, audiences, conversions, analytics, and full campaign management (create, update, delete)
+- **26 Specialized Tools** - Covering accounts, campaigns, creatives, audiences, conversions, analytics, and full campaign management (create, update, delete)
 - **Comprehensive Metrics** - Every report includes: Spend, Impressions, Clicks, CTR, Reach, Frequency, Engagements, Engagement Rate, CPM, CPC, Conversions, Conversion Rate, Cost per Conversion, Audience Penetration, and Average Dwell Time
 - **Single OAuth Authentication** - Authenticate once and access all your LinkedIn ad accounts
 - **Automatic Token Refresh** - Tokens refresh automatically before expiration
@@ -372,6 +372,7 @@ After updating the config, restart Claude Desktop for the changes to take effect
 | `create_creative` | Create a creative from an existing post/share |
 | `create_inline_ad` | Create an ad with inline content (text, image, CTA) in one call |
 | `update_creative_status` | Activate, pause, or archive a creative |
+| `create_text_ad` | Create a text ad (headline ≤ 25, description ≤ 75, landing page, optional image) in a TEXT_AD campaign |
 | `upload_image` | Upload an image for use in ads (PNG, JPG, GIF) |
 
 ---

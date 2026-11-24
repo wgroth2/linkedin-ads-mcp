@@ -18,7 +18,7 @@ accounts. For installation and usage, see the [README](README.md).
 The server is a local [Model Context Protocol](https://modelcontextprotocol.io)
 server written in TypeScript for Node.js 18+. An MCP client (Claude Desktop,
 Claude Code, Cursor and others) starts it as a child process and talks to it
-over **stdio** using JSON-RPC. The server exposes 25 tools and turns each tool
+over **stdio** using JSON-RPC. The server exposes 26 tools and turns each tool
 call into one or more calls to LinkedIn's versioned Marketing REST API.
 
 It has no database, no web UI and no background jobs. The only state it keeps
@@ -117,7 +117,7 @@ Every LinkedIn call goes through the private `LinkedInApiClient.request()`:
 | `/rest/adAccounts`, `/rest/adAccounts/{id}` | Account list and details |
 | `/rest/adAccounts/{id}/adCampaignGroups[/{id}]` | List, create, update and delete campaign groups |
 | `/rest/adAccounts/{id}/adCampaigns[/{id}]` | List, create, update and delete campaigns |
-| `/rest/adAccounts/{id}/creatives[/{id}]` | List and update creatives; `?action=createInline` creates a post and its creative in one call |
+| `/rest/adAccounts/{id}/creatives[/{id}]` | List, create and update creatives (including `content.textAd` text ads); `?action=createInline` creates a post and its creative in one call |
 | `/rest/adAnalytics` | All performance, demographic, reach, conversion and lead-gen metrics |
 | `/rest/posts/{urn}`, `/rest/images/{urn}` | Resolve a creative's text and image for reporting |
 | `/rest/images?action=initializeUpload` | Start an image upload |
@@ -184,7 +184,7 @@ changes in more needs the Standard tier.
 `list_campaigns`. Unlike the performance tools, `list_campaigns` also returns
 drafts and campaigns with no impressions.
 
-**Write (10):**
+**Write (11):**
 
 | Tool | Default / behavior |
 |---|---|
@@ -192,9 +192,10 @@ drafts and campaigns with no impressions.
 | `create_campaign` | `DRAFT`, type `SPONSORED_UPDATES`, `CPM`, locale US/en, Audience Network **off**, audience expansion **off**, `NOT_POLITICAL` |
 | `create_creative` | Sponsors an existing post URN; `intendedStatus` defaults to `DRAFT` |
 | `create_inline_ad` | Creates a sponsored-content post (tagged with `adContext.dscAdAccount`) and its creative in one call; `DRAFT` |
+| `create_text_ad` | Text ad (desktop right rail) in a `TEXT_AD` campaign: headline ≤ 25 characters, description ≤ 75, landing page, optional 100×100 image. Checks the limits and that the campaign is `TEXT_AD` before sending; `DRAFT` |
 | `upload_image` | Two steps: `initializeUpload`, then PUT the local file's bytes to the returned URL. Returns the `urn:li:image:…` to pass as `mediaId` |
-| `update_campaign_group`, `update_campaign`, `update_creative_status` | Partial updates; **can set `ACTIVE`** |
-| `delete_campaign_group`, `delete_campaign` | Drafts are deleted outright; other statuses go to `PENDING_DELETION` |
+| `update_campaign_group`, `update_campaign`, `update_creative_status` | Partial updates; **can set `ACTIVE`**. Require the object's current name (see §7) |
+| `delete_campaign_group`, `delete_campaign` | Drafts are deleted outright; other statuses go to `PENDING_DELETION`. Require the object's current name (see §7) |
 
 ### Typical ad build
 
@@ -224,6 +225,18 @@ sequenceDiagram
   later.
 - **No write retries:** a failed create is reported, not repeated, so a lost
   response can't produce duplicates.
+- **Name confirmation:** the five tools that can activate, pause or delete
+  require the ad account's current name (`accountName`) and the object's
+  current name (`campaignName`, `campaignGroupName` or `creativeName`;
+  `"(unnamed)"` when it has none). MCP clients show tool arguments in their
+  approval prompts, so the person approving sees "Grid" and
+  "LinkedIn | FRR | Var A Long Form | Nov 2026 | Text" rather than only
+  `519772245` and `919578816`. Before sending the change, the handler fetches
+  the account and the object and checks both names against LinkedIn's
+  (`verifyAccountName()` and `assertNameMatches()` in
+  `tools/campaign-management.ts`). If the name is missing or belongs to a
+  different object, the call fails with "Nothing was changed", so the prompt
+  can't show one name while the change hits another object.
 - **Recommended: client-side approval.** Five tools can activate or delete:
   `update_campaign`, `update_campaign_group`, `update_creative_status`,
   `delete_campaign` and `delete_campaign_group`. Most MCP clients can require

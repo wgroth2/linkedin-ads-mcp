@@ -130,6 +130,13 @@ export class LinkedInApiClient {
       headers['Content-Type'] = 'application/json';
     }
 
+    // Only reads are safe to retry after a failure. A write (create, update,
+    // delete) may have succeeded on LinkedIn's side even when the response was
+    // lost, so retrying it could create duplicate campaigns or ads. Rate-limit
+    // (429) responses are still retried for all requests, because LinkedIn
+    // rejects those before doing any work.
+    const isRead = LinkedInApiClient.isReadRequest(options);
+
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < this.retryCount; attempt++) {
@@ -157,7 +164,11 @@ export class LinkedInApiClient {
           } catch {
             errorData = { status: response.status, message: errorText };
           }
-          throw new Error(`LinkedIn API error (${response.status}): ${errorData.message}`);
+          const apiError = new Error(`LinkedIn API error (${response.status}): ${errorData.message}`);
+          // 4xx errors (bad input, missing permission, not found) will fail the
+          // same way every time, so they are never retried.
+          (apiError as Error & { retryable?: boolean }).retryable = response.status >= 500;
+          throw apiError;
         }
 
         // Return raw response if requested (for write operations that need headers)
@@ -186,6 +197,11 @@ export class LinkedInApiClient {
           throw lastError;
         }
 
+        // Never retry a failed write, and never retry a 4xx error.
+        if (!isRead || (lastError as Error & { retryable?: boolean }).retryable === false) {
+          throw lastError;
+        }
+
         if (attempt < this.retryCount - 1) {
           const waitTime = this.retryDelay * Math.pow(2, attempt);
           console.error(`Request failed, retrying in ${waitTime}ms...`);
@@ -195,6 +211,21 @@ export class LinkedInApiClient {
     }
 
     throw lastError || new Error('Request failed after retries');
+  }
+
+  /**
+   * Returns true when a request only reads data and is therefore safe to retry.
+   * A request is a read when it uses GET (the default method) and does not ask
+   * Rest.li for a write method through the X-RestLi-Method header.
+   *
+   * @param options - The request options passed to request().
+   * @returns True for reads, false for creates, updates and deletes.
+   */
+  private static isReadRequest(options: RequestOptions): boolean {
+    const method = (options.method || 'GET').toUpperCase();
+    const readRestliMethods = ['GET', 'FINDER', 'BATCH_GET'];
+    return method === 'GET' &&
+      (!options.restliMethod || readRestliMethods.includes(options.restliMethod));
   }
 
   private sleep(ms: number): Promise<void> {
@@ -989,6 +1020,48 @@ export class LinkedInApiClient {
     if (data.content) body.content = data.content;
     if (data.inlineContent) body.inlineContent = data.inlineContent;
     if (data.leadgenCallToAction) body.leadgenCallToAction = data.leadgenCallToAction;
+    if (data.name) body.name = data.name;
+
+    return this.request<{ id: string }>(`/rest/adAccounts/${accountId}/creatives`, {
+      method: 'POST',
+      body,
+    });
+  }
+
+  /**
+   * Creates a text ad (the small ads in LinkedIn's desktop right rail).
+   *
+   * Text ads don't use a post: their content is a `textAd` object with a
+   * headline, description, landing page and optional 100x100 image. They can
+   * only be added to campaigns whose type is TEXT_AD.
+   *
+   * @param accountId - The ad account ID.
+   * @param data - Campaign, status, optional name and the text ad content.
+   * @returns The new creative's ID, from the x-restli-id response header.
+   */
+  async createTextAdCreative(accountId: string, data: {
+    campaign: string;
+    intendedStatus: string;
+    name?: string;
+    headline: string;
+    description: string;
+    landingPage: string;
+    imageUrn?: string;
+  }): Promise<{ id: string }> {
+    const campaignUrn = data.campaign.startsWith('urn:') ? data.campaign : `urn:li:sponsoredCampaign:${data.campaign}`;
+
+    const textAd: Record<string, unknown> = {
+      headline: data.headline,
+      description: data.description,
+      landingPage: data.landingPage,
+    };
+    if (data.imageUrn) textAd.image = data.imageUrn;
+
+    const body: Record<string, unknown> = {
+      campaign: campaignUrn,
+      intendedStatus: data.intendedStatus,
+      content: { textAd },
+    };
     if (data.name) body.name = data.name;
 
     return this.request<{ id: string }>(`/rest/adAccounts/${accountId}/creatives`, {

@@ -12,7 +12,85 @@ import {
   DeleteCampaignGroupInput,
   ListCampaignsInput,
   UploadImageInput,
+  CreateTextAdInput,
 } from '../lib/types.js';
+
+// ==================== Name Confirmation ====================
+
+/** Value to pass as the name when the object has no name in LinkedIn. */
+const UNNAMED = '(unnamed)';
+
+/**
+ * Checks that the name a caller supplied matches the object's real name in
+ * LinkedIn before an update, status change or delete is sent.
+ *
+ * The tools that can activate, pause or delete require the object's current
+ * name, so an MCP client's approval prompt shows a recognizable name instead
+ * of only a numeric ID. Verifying the name here keeps that prompt honest: if
+ * the name and the ID don't belong to the same object, nothing is changed.
+ *
+ * @param kind - Object type used in messages, e.g. "campaign".
+ * @param fieldName - The tool argument that carries the name, e.g. "campaignName".
+ * @param id - The ID the change would be applied to.
+ * @param suppliedName - The name passed in the tool arguments.
+ * @param actualName - The name LinkedIn returned for that ID (may be empty).
+ * @throws Error when no name was supplied or it doesn't match LinkedIn's.
+ */
+function assertNameMatches(
+  kind: string,
+  fieldName: string,
+  id: string,
+  suppliedName: string | undefined,
+  actualName: string | undefined | null,
+): void {
+  const expected = (actualName ?? '').trim() || UNNAMED;
+  const supplied = (suppliedName ?? '').trim();
+
+  if (!supplied) {
+    throw new Error(
+      `${fieldName} is required: pass the ${kind}'s current name exactly as LinkedIn shows it ` +
+      `(use "${UNNAMED}" if it has none). Nothing was changed.`,
+    );
+  }
+
+  if (supplied !== expected) {
+    throw new Error(
+      `Name check failed: ${kind} ${id} is named "${expected}" in LinkedIn, but "${supplied}" was given. ` +
+      'Nothing was changed.',
+    );
+  }
+}
+
+/**
+ * Builds the JSON Schema property for a required name-confirmation argument.
+ *
+ * @param kind - Object type used in the description, e.g. "campaign".
+ * @returns A JSON Schema string property with a description for the model.
+ */
+function nameConfirmationProperty(kind: string): { type: string; description: string } {
+  return {
+    type: 'string',
+    description:
+      `Current name of the ${kind}, exactly as LinkedIn shows it (use "${UNNAMED}" if it has none). ` +
+      'Shown in approval prompts so the change is easy to recognize, and checked against LinkedIn ' +
+      'before anything is changed; a mismatch aborts the call.',
+  };
+}
+
+/**
+ * Checks that the supplied ad account name matches the account's real name in
+ * LinkedIn, so an approval prompt that shows "Grid" can't be approving a
+ * change in some other account.
+ *
+ * @param client - LinkedIn API client used to look up the account.
+ * @param accountId - The ad account the change would be applied to.
+ * @param accountName - The account name passed in the tool arguments.
+ * @throws Error when the name is missing or doesn't match LinkedIn's.
+ */
+async function verifyAccountName(client: LinkedInApiClient, accountId: string, accountName: string | undefined): Promise<void> {
+  const account = await client.getAccountDetails(accountId);
+  assertNameMatches('ad account', 'accountName', accountId, accountName, account?.name);
+}
 
 // ==================== Campaign Group Tools ====================
 
@@ -37,7 +115,7 @@ export const createCampaignGroupTool: Tool = {
       dailyBudgetCurrency: { type: 'string', description: 'Daily budget currency code' },
       objectiveType: {
         type: 'string',
-        enum: ['BRAND_AWARENESS', 'ENGAGEMENT', 'JOB_APPLICANTS', 'LEAD_GENERATION', 'WEBSITE_CONVERSIONS', 'WEBSITE_VISIT', 'VIDEO_VIEWS'],
+        enum: ['BRAND_AWARENESS', 'ENGAGEMENT', 'JOB_APPLICANTS', 'LEAD_GENERATION', 'WEBSITE_CONVERSION', 'WEBSITE_VISIT', 'VIDEO_VIEWS'],
         description: 'Campaign group objective type. Immutable once set. All campaigns in the group inherit this objective.',
       },
     },
@@ -100,8 +178,10 @@ export const updateCampaignGroupTool: Tool = {
     type: 'object',
     properties: {
       accountId: { type: 'string', description: 'The LinkedIn Ad Account ID' },
+      accountName: nameConfirmationProperty('ad account'),
       campaignGroupId: { type: 'string', description: 'The campaign group ID to update' },
-      name: { type: 'string', description: 'New name for the campaign group' },
+      campaignGroupName: nameConfirmationProperty('campaign group'),
+      name: { type: 'string', description: 'New name for the campaign group (only to rename it)' },
       status: {
         type: 'string',
         enum: ['ACTIVE', 'PAUSED', 'ARCHIVED', 'DRAFT'],
@@ -111,7 +191,7 @@ export const updateCampaignGroupTool: Tool = {
       totalBudgetCurrency: { type: 'string', description: 'Budget currency code' },
       endDate: { type: 'number', description: 'New end date as Unix timestamp in milliseconds' },
     },
-    required: ['accountId', 'campaignGroupId'],
+    required: ['accountId', 'accountName', 'campaignGroupId', 'campaignGroupName'],
   },
 };
 
@@ -119,7 +199,13 @@ export async function handleUpdateCampaignGroup(client: LinkedInApiClient, args:
   const input = args as UpdateCampaignGroupInput;
 
   if (!input.accountId) throw new Error('accountId is required');
+  await verifyAccountName(client, input.accountId, input.accountName);
   if (!input.campaignGroupId) throw new Error('campaignGroupId is required');
+
+  const groups = await client.listCampaignGroups(input.accountId, {});
+  const group = groups.find(g => String(g.id) === String(input.campaignGroupId));
+  if (!group) throw new Error(`Campaign group ${input.campaignGroupId} not found in account ${input.accountId}. Nothing was changed.`);
+  assertNameMatches('campaign group', 'campaignGroupName', input.campaignGroupId, input.campaignGroupName, group.name);
 
   const updates: Record<string, unknown> = {};
 
@@ -144,8 +230,9 @@ export async function handleUpdateCampaignGroup(client: LinkedInApiClient, args:
   return {
     success: true,
     campaignGroupId: input.campaignGroupId,
+    campaignGroupName: group.name,
     updatedFields: Object.keys(updates),
-    message: `Campaign group ${input.campaignGroupId} updated successfully`,
+    message: `Campaign group "${group.name}" (${input.campaignGroupId}) updated successfully`,
   };
 }
 
@@ -156,9 +243,11 @@ export const deleteCampaignGroupTool: Tool = {
     type: 'object',
     properties: {
       accountId: { type: 'string', description: 'The LinkedIn Ad Account ID' },
+      accountName: nameConfirmationProperty('ad account'),
       campaignGroupId: { type: 'string', description: 'The campaign group ID to delete' },
+      campaignGroupName: nameConfirmationProperty('campaign group'),
     },
-    required: ['accountId', 'campaignGroupId'],
+    required: ['accountId', 'accountName', 'campaignGroupId', 'campaignGroupName'],
   },
 };
 
@@ -166,18 +255,22 @@ export async function handleDeleteCampaignGroup(client: LinkedInApiClient, args:
   const input = args as DeleteCampaignGroupInput;
 
   if (!input.accountId) throw new Error('accountId is required');
+  await verifyAccountName(client, input.accountId, input.accountName);
   if (!input.campaignGroupId) throw new Error('campaignGroupId is required');
 
   // First fetch the campaign group to check its current status
   const groups = await client.listCampaignGroups(input.accountId, {});
   const group = groups.find(g => String(g.id) === String(input.campaignGroupId));
+  if (!group) throw new Error(`Campaign group ${input.campaignGroupId} not found in account ${input.accountId}. Nothing was changed.`);
+  assertNameMatches('campaign group', 'campaignGroupName', input.campaignGroupId, input.campaignGroupName, group.name);
 
-  const isDraft = group?.status === 'DRAFT';
+  const isDraft = group.status === 'DRAFT';
   await client.deleteCampaignGroup(input.accountId, input.campaignGroupId, isDraft);
 
   return {
     success: true,
     campaignGroupId: input.campaignGroupId,
+    campaignGroupName: group.name,
     action: isDraft ? 'DELETED' : 'PENDING_DELETION',
     message: isDraft
       ? `Draft campaign group ${input.campaignGroupId} deleted`
@@ -198,7 +291,7 @@ export const createCampaignTool: Tool = {
       campaignGroupId: { type: 'string', description: 'Campaign group ID to place this campaign under' },
       objectiveType: {
         type: 'string',
-        enum: ['BRAND_AWARENESS', 'ENGAGEMENT', 'JOB_APPLICANTS', 'LEAD_GENERATION', 'WEBSITE_CONVERSIONS', 'WEBSITE_VISIT', 'VIDEO_VIEWS'],
+        enum: ['BRAND_AWARENESS', 'ENGAGEMENT', 'JOB_APPLICANTS', 'LEAD_GENERATION', 'WEBSITE_CONVERSION', 'WEBSITE_VISIT', 'VIDEO_VIEWS'],
         description: 'Campaign objective type',
       },
       type: {
@@ -319,8 +412,10 @@ export const updateCampaignTool: Tool = {
     type: 'object',
     properties: {
       accountId: { type: 'string', description: 'The LinkedIn Ad Account ID' },
+      accountName: nameConfirmationProperty('ad account'),
       campaignId: { type: 'string', description: 'The campaign ID to update' },
-      name: { type: 'string', description: 'New campaign name' },
+      campaignName: nameConfirmationProperty('campaign'),
+      name: { type: 'string', description: 'New campaign name (only to rename it)' },
       status: {
         type: 'string',
         enum: ['ACTIVE', 'PAUSED', 'ARCHIVED', 'DRAFT'],
@@ -341,7 +436,7 @@ export const updateCampaignTool: Tool = {
       audienceExpansionEnabled: { type: 'boolean', description: 'Enable/disable audience expansion' },
       optimizationTargetType: { type: 'string', description: 'Optimization target type' },
     },
-    required: ['accountId', 'campaignId'],
+    required: ['accountId', 'accountName', 'campaignId', 'campaignName'],
   },
 };
 
@@ -349,7 +444,12 @@ export async function handleUpdateCampaign(client: LinkedInApiClient, args: unkn
   const input = args as UpdateCampaignInput;
 
   if (!input.accountId) throw new Error('accountId is required');
+  await verifyAccountName(client, input.accountId, input.accountName);
   if (!input.campaignId) throw new Error('campaignId is required');
+
+  const campaign = await client.getCampaign(input.accountId, input.campaignId);
+  if (!campaign) throw new Error(`Campaign ${input.campaignId} not found in account ${input.accountId}. Nothing was changed.`);
+  assertNameMatches('campaign', 'campaignName', input.campaignId, input.campaignName, campaign.name);
 
   const updates: Record<string, unknown> = {};
 
@@ -398,8 +498,9 @@ export async function handleUpdateCampaign(client: LinkedInApiClient, args: unkn
   return {
     success: true,
     campaignId: input.campaignId,
+    campaignName: campaign.name,
     updatedFields: Object.keys(updates),
-    message: `Campaign ${input.campaignId} updated successfully`,
+    message: `Campaign "${campaign.name}" (${input.campaignId}) updated successfully`,
   };
 }
 
@@ -410,9 +511,11 @@ export const deleteCampaignTool: Tool = {
     type: 'object',
     properties: {
       accountId: { type: 'string', description: 'The LinkedIn Ad Account ID' },
+      accountName: nameConfirmationProperty('ad account'),
       campaignId: { type: 'string', description: 'The campaign ID to delete' },
+      campaignName: nameConfirmationProperty('campaign'),
     },
-    required: ['accountId', 'campaignId'],
+    required: ['accountId', 'accountName', 'campaignId', 'campaignName'],
   },
 };
 
@@ -420,17 +523,21 @@ export async function handleDeleteCampaign(client: LinkedInApiClient, args: unkn
   const input = args as DeleteCampaignInput;
 
   if (!input.accountId) throw new Error('accountId is required');
+  await verifyAccountName(client, input.accountId, input.accountName);
   if (!input.campaignId) throw new Error('campaignId is required');
 
   // Fetch campaign to determine if it's a draft
   const campaign = await client.getCampaign(input.accountId, input.campaignId);
-  const isDraft = campaign?.status === 'DRAFT';
+  if (!campaign) throw new Error(`Campaign ${input.campaignId} not found in account ${input.accountId}. Nothing was changed.`);
+  assertNameMatches('campaign', 'campaignName', input.campaignId, input.campaignName, campaign.name);
+  const isDraft = campaign.status === 'DRAFT';
 
   await client.deleteCampaign(input.accountId, input.campaignId, isDraft);
 
   return {
     success: true,
     campaignId: input.campaignId,
+    campaignName: campaign.name,
     action: isDraft ? 'DELETED' : 'PENDING_DELETION',
     message: isDraft
       ? `Draft campaign ${input.campaignId} deleted`
@@ -447,14 +554,16 @@ export const updateCreativeStatusTool: Tool = {
     type: 'object',
     properties: {
       accountId: { type: 'string', description: 'The LinkedIn Ad Account ID' },
+      accountName: nameConfirmationProperty('ad account'),
       creativeId: { type: 'string', description: 'The creative ID (numeric ID or full URN)' },
+      creativeName: nameConfirmationProperty('creative'),
       intendedStatus: {
         type: 'string',
         enum: ['ACTIVE', 'PAUSED', 'ARCHIVED'],
         description: 'New intended status for the creative',
       },
     },
-    required: ['accountId', 'creativeId', 'intendedStatus'],
+    required: ['accountId', 'accountName', 'creativeId', 'creativeName', 'intendedStatus'],
   },
 };
 
@@ -462,8 +571,15 @@ export async function handleUpdateCreativeStatus(client: LinkedInApiClient, args
   const input = args as UpdateCreativeStatusInput;
 
   if (!input.accountId) throw new Error('accountId is required');
+  await verifyAccountName(client, input.accountId, input.accountName);
   if (!input.creativeId) throw new Error('creativeId is required');
   if (!input.intendedStatus) throw new Error('intendedStatus is required');
+
+  // getCreative expects the numeric ID, so strip a full URN if one was passed.
+  const numericId = input.creativeId.replace(/^urn:li:sponsoredCreative:/, '');
+  const creative = await client.getCreative(input.accountId, numericId);
+  if (!creative) throw new Error(`Creative ${input.creativeId} not found in account ${input.accountId}. Nothing was changed.`);
+  assertNameMatches('creative', 'creativeName', input.creativeId, input.creativeName, creative.name);
 
   await client.updateCreative(input.accountId, input.creativeId, {
     intendedStatus: input.intendedStatus,
@@ -472,8 +588,9 @@ export async function handleUpdateCreativeStatus(client: LinkedInApiClient, args
   return {
     success: true,
     creativeId: input.creativeId,
+    creativeName: creative.name || UNNAMED,
     intendedStatus: input.intendedStatus,
-    message: `Creative ${input.creativeId} status updated to ${input.intendedStatus}`,
+    message: `Creative "${creative.name || UNNAMED}" (${input.creativeId}) status updated to ${input.intendedStatus}`,
   };
 }
 
@@ -536,6 +653,105 @@ export async function handleCreateCreative(client: LinkedInApiClient, args: unkn
   };
 }
 
+// ==================== Text Ad Creation ====================
+
+/** LinkedIn's character limits for text ads. */
+const TEXT_AD_HEADLINE_MAX = 25;
+const TEXT_AD_DESCRIPTION_MAX = 75;
+
+export const createTextAdTool: Tool = {
+  name: 'create_text_ad',
+  description: 'Creates a LinkedIn text ad (the small ads in the desktop right rail) in a TEXT_AD campaign. Text ads have a headline (max 25 characters), a description (max 75 characters), a landing page and an optional 100x100 image. Defaults to DRAFT. Use create_campaign with type TEXT_AD first if the account has no text-ad campaign; sponsored-content campaigns cannot hold text ads.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      accountId: { type: 'string', description: 'The LinkedIn Ad Account ID' },
+      campaignId: { type: 'string', description: 'ID of a TEXT_AD campaign (numeric ID or full URN)' },
+      headline: { type: 'string', description: `Ad headline, max ${TEXT_AD_HEADLINE_MAX} characters` },
+      description: { type: 'string', description: `Ad description, max ${TEXT_AD_DESCRIPTION_MAX} characters` },
+      landingPageUrl: { type: 'string', description: 'Destination URL (http or https), including any UTM parameters' },
+      imageUrn: { type: 'string', description: 'Optional image (urn:li:image:...) from upload_image. Shown at 100x100; use a square image.' },
+      name: { type: 'string', description: 'Optional name for the ad in Campaign Manager' },
+      intendedStatus: {
+        type: 'string',
+        enum: ['ACTIVE', 'DRAFT'],
+        description: 'Initial status. Default: DRAFT',
+      },
+    },
+    required: ['accountId', 'campaignId', 'headline', 'description', 'landingPageUrl'],
+  },
+};
+
+/**
+ * Validates a text ad's inputs and creates it.
+ *
+ * Checks the character limits, the landing page and image formats, and that
+ * the target campaign is a TEXT_AD campaign, all before anything is sent, so
+ * a bad request fails with a clear message instead of a LinkedIn 400.
+ *
+ * @param client - LinkedIn API client.
+ * @param args - Tool arguments (see createTextAdTool's input schema).
+ * @returns The new creative's ID, campaign, status and content.
+ * @throws Error when any check fails; nothing is created in that case.
+ */
+export async function handleCreateTextAd(client: LinkedInApiClient, args: unknown): Promise<unknown> {
+  const input = args as CreateTextAdInput;
+
+  if (!input.accountId) throw new Error('accountId is required');
+  if (!input.campaignId) throw new Error('campaignId is required');
+  if (!input.headline) throw new Error('headline is required');
+  if (!input.description) throw new Error('description is required');
+  if (!input.landingPageUrl) throw new Error('landingPageUrl is required');
+
+  // Count characters, not UTF-16 code units, so emoji and accents count once.
+  const headlineLength = [...input.headline].length;
+  const descriptionLength = [...input.description].length;
+  if (headlineLength > TEXT_AD_HEADLINE_MAX) {
+    throw new Error(`headline is ${headlineLength} characters; the limit is ${TEXT_AD_HEADLINE_MAX}. Nothing was created.`);
+  }
+  if (descriptionLength > TEXT_AD_DESCRIPTION_MAX) {
+    throw new Error(`description is ${descriptionLength} characters; the limit is ${TEXT_AD_DESCRIPTION_MAX}. Nothing was created.`);
+  }
+  if (!/^https?:\/\//i.test(input.landingPageUrl)) {
+    throw new Error('landingPageUrl must start with http:// or https://. Nothing was created.');
+  }
+  if (input.imageUrn && !input.imageUrn.startsWith('urn:li:image:')) {
+    throw new Error('imageUrn must be an image URN (urn:li:image:...) from upload_image. Nothing was created.');
+  }
+
+  const campaignId = input.campaignId.replace(/^urn:li:sponsoredCampaign:/, '');
+  const campaign = await client.getCampaign(input.accountId, campaignId);
+  if (!campaign) throw new Error(`Campaign ${input.campaignId} not found in account ${input.accountId}. Nothing was created.`);
+  if (campaign.type !== 'TEXT_AD') {
+    throw new Error(
+      `Campaign "${campaign.name}" (${campaignId}) is a ${campaign.type} campaign; text ads can only go in a TEXT_AD campaign. Nothing was created.`,
+    );
+  }
+
+  const intendedStatus = input.intendedStatus || 'DRAFT';
+  const result = await client.createTextAdCreative(input.accountId, {
+    campaign: campaignId,
+    intendedStatus,
+    name: input.name,
+    headline: input.headline,
+    description: input.description,
+    landingPage: input.landingPageUrl,
+    imageUrn: input.imageUrn,
+  });
+
+  return {
+    success: true,
+    creativeId: result.id,
+    campaignId,
+    campaignName: campaign.name,
+    intendedStatus,
+    headline: input.headline,
+    description: input.description,
+    landingPageUrl: input.landingPageUrl,
+    message: `Text ad created under campaign "${campaign.name}" (${campaignId}) as ${intendedStatus}`,
+  };
+}
+
 // ==================== Inline Ad Creation ====================
 
 export const createInlineAdTool: Tool = {
@@ -553,7 +769,7 @@ export const createInlineAdTool: Tool = {
         description: 'URN of the image or video to use (e.g., urn:li:image:C5510AQE... or urn:li:video:C5510AQE...). Upload media first via LinkedIn\'s media upload APIs.',
       },
       mediaTitle: { type: 'string', description: 'Title for the media (displayed as headline for videos)' },
-      landingPageUrl: { type: 'string', description: 'Landing page URL for the ad. Required for WEBSITE_VISIT and WEBSITE_CONVERSIONS campaign objectives.' },
+      landingPageUrl: { type: 'string', description: 'Landing page URL for the ad. Required for WEBSITE_VISIT and WEBSITE_CONVERSION campaign objectives.' },
       callToActionLabel: {
         type: 'string',
         enum: ['APPLY', 'DOWNLOAD', 'VIEW_QUOTE', 'LEARN_MORE', 'SIGN_UP', 'SUBSCRIBE', 'REGISTER', 'REQUEST_DEMO', 'JOIN', 'ATTEND'],

@@ -351,7 +351,11 @@ export interface CreateCampaignGroupInput {
 
 export interface UpdateCampaignGroupInput {
   accountId: string;
+  /** Current name of the ad account; shown in approval prompts and checked against LinkedIn */
+  accountName: string;
   campaignGroupId: string;
+  /** Current name of the group; shown in approval prompts and checked against LinkedIn */
+  campaignGroupName: string;
   name?: string;
   status?: 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DRAFT';
   totalBudgetAmount?: string;
@@ -386,7 +390,11 @@ export interface CreateCampaignInput {
 
 export interface UpdateCampaignInput {
   accountId: string;
+  /** Current name of the ad account; shown in approval prompts and checked against LinkedIn */
+  accountName: string;
   campaignId: string;
+  /** Current name of the campaign; shown in approval prompts and checked against LinkedIn */
+  campaignName: string;
   name?: string;
   status?: 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DRAFT';
   dailyBudgetAmount?: string;
@@ -404,7 +412,11 @@ export interface UpdateCampaignInput {
 
 export interface UpdateCreativeStatusInput {
   accountId: string;
+  /** Current name of the ad account; shown in approval prompts and checked against LinkedIn */
+  accountName: string;
   creativeId: string;
+  /** Current name of the creative; shown in approval prompts and checked against LinkedIn */
+  creativeName: string;
   intendedStatus: 'ACTIVE' | 'PAUSED' | 'ARCHIVED';
 }
 
@@ -433,14 +445,36 @@ export interface CreateInlineAdInput {
   leadgenCallToActionLabel?: string;
 }
 
-export interface DeleteCampaignInput {
+export interface CreateTextAdInput {
   accountId: string;
   campaignId: string;
+  /** Up to 25 characters */
+  headline: string;
+  /** Up to 75 characters */
+  description: string;
+  landingPageUrl: string;
+  /** Optional urn:li:image:... from upload_image (shown at 100x100) */
+  imageUrn?: string;
+  name?: string;
+  intendedStatus?: 'ACTIVE' | 'DRAFT';
+}
+
+export interface DeleteCampaignInput {
+  accountId: string;
+  /** Current name of the ad account; shown in approval prompts and checked against LinkedIn */
+  accountName: string;
+  campaignId: string;
+  /** Current name of the campaign; shown in approval prompts and checked against LinkedIn */
+  campaignName: string;
 }
 
 export interface DeleteCampaignGroupInput {
   accountId: string;
+  /** Current name of the ad account; shown in approval prompts and checked against LinkedIn */
+  accountName: string;
   campaignGroupId: string;
+  /** Current name of the group; shown in approval prompts and checked against LinkedIn */
+  campaignGroupName: string;
 }
 
 export interface ListCampaignsInput {

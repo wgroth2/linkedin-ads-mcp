@@ -72,6 +72,8 @@ import {
   handleListCampaigns,
   uploadImageTool,
   handleUploadImage,
+  createTextAdTool,
+  handleCreateTextAd,
 } from './tools/campaign-management.js';
 
 // All available tools
@@ -107,6 +109,7 @@ const TOOLS: Tool[] = [
   createInlineAdTool,
   listCampaignsTool,
   uploadImageTool,
+  createTextAdTool,
 ];
 
 class LinkedInAdsMCPServer {
@@ -249,6 +252,9 @@ class LinkedInAdsMCPServer {
             break;
           case 'upload_image':
             result = await handleUploadImage(this.apiClient, args);
+            break;
+          case 'create_text_ad':
+            result = await handleCreateTextAd(this.apiClient, args);
             break;
 
           default:
